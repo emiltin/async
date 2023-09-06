@@ -7,7 +7,18 @@ require_relative 'list'
 require_relative 'task'
 
 module Async
-	# A general purpose synchronisation primitive, which allows one task to wait for a number of other tasks to complete. It can be used in conjunction with {Semaphore}.
+
+	# Raised if a task in a barrier fails
+	class BarrierError < StandardError
+		attr_reader :task, :error
+		def initialize(message = "task failed",task:)
+			@task = task
+			super(message)
+		end
+	end
+	
+
+		# A general purpose synchronisation primitive, which allows one task to wait for a number of other tasks to complete. It can be used in conjunction with {Semaphore}.
 	#
 	# @public Since `stable-v1`.
 	class Barrier
@@ -16,7 +27,8 @@ module Async
 		# @public Since `stable-v1`.
 		def initialize(parent: nil)
 			@tasks = List.new
-			
+			@finished = Notification.new
+
 			@parent = parent
 		end
 		
@@ -40,8 +52,8 @@ module Async
 		
 		# Execute a child task and add it to the barrier.
 		# @asynchronous Executes the given block concurrently.
-		def async(*arguments, parent: (@parent or Task.current), **options, &block)
-			task = parent.async(*arguments, **options, &block)
+		def async(*arguments, parent: (@parent or Task.current), finished: @finished, **options, &block)
+			task = parent.async(*arguments, finished:, **options, &block)
 			
 			@tasks.append(TaskNode.new(task))
 			
@@ -54,16 +66,15 @@ module Async
 			@tasks.empty?
 		end
 		
-		# Wait for all tasks to complete by invoking {Task#wait} on each waiting task, which may raise an error. As long as the task has completed, it will be removed from the barrier.
-		# @asynchronous Will wait for tasks to finish executing.
-		def wait
-			@tasks.each do |waiting|
-				task = waiting.task
-				begin
-					task.wait
-				ensure
-					@tasks.remove?(waiting) unless task.alive?
+		# Wait for all tasks to complete. A task will be removed from the barrier whether if completes or fails.
+		# @parameter fail_fast [Boolean] Whether re-raise as soon as any task fails
+		def wait(fail_fast: true)
+			until @tasks.empty?
+				task = @finished.wait
+				if fail_fast && task.failed?
+					raise BarrierError.new("Failing fast", task: task)
 				end
+				remove(task)
 			end
 		end
 		
@@ -73,6 +84,21 @@ module Async
 			@tasks.each do |waiting|
 				waiting.task.stop
 			end
+		end
+
+		private
+
+		# Remove node containing task
+		# @parameter task [Task] Task to remove		
+		def remove task
+			return if task.alive?
+			node = @tasks.each do |node| 
+				if node.task == task
+					@tasks.remove(node) 
+					return true
+				end
+			end
+			false
 		end
 	end
 end
