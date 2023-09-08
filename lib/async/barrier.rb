@@ -88,6 +88,7 @@ module Async
 	      waiting = finished.wait
 	      if fail_fast && waiting.task.failed?
 	      	waiter.stop
+	      	stop
 	      	raise Async::BarrierError.new(task: waiting.task)
 	      end
 	    end
