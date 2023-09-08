@@ -39,6 +39,9 @@ module Async
 	
 	# @public Since `stable-v1`.
 	class Task < Node
+
+		attr_reader :finished
+		
 		class FinishedError < RuntimeError
 			def initialize(message = "Cannot create child task within a task that has finished execution!")
 				super

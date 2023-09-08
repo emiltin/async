@@ -11,7 +11,7 @@ Async do
   barrier.async { sleep 2 }
   
 
-  barrier.wait(fail_fast: false)
+  barrier.wait(fail_fast: true)
   puts 'done'
 rescue Async::BarrierError => e
 	puts "Barrier error: #{e} due to #{e.task.result.inspect}"

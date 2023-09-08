@@ -27,7 +27,7 @@ module Async
 		# @public Since `stable-v1`.
 		def initialize(parent: nil)
 			@tasks = List.new
-			@finished = Notification.new
+			@finished = []
 
 			@parent = parent
 		end
@@ -52,7 +52,7 @@ module Async
 		
 		# Execute a child task and add it to the barrier.
 		# @asynchronous Executes the given block concurrently.
-		def async(*arguments, parent: (@parent or Task.current), finished: @finished, **options, &block)
+		def async(*arguments, parent: (@parent or Task.current), finished: Condition.new, **options, &block)
 			task = parent.async(*arguments, finished:, **options, &block)
 			
 			@tasks.append(TaskNode.new(task))
@@ -68,16 +68,31 @@ module Async
 		
 		# Wait for all tasks to complete. A task will be removed from the barrier whether if completes or fails.
 		# @parameter fail_fast [Boolean] Whether re-raise as soon as any task fails
+		#
+		# this works, but will break if tasks are added while we're waiting for tasks to complete,
+		# because we're create waiter task for each task once at the beginning, before we're waiting..
+		#
 		def wait(fail_fast: true)
-			until @tasks.empty?
-				task = @finished.wait
-				if fail_fast && task.failed?
-					raise BarrierError.new("Failing fast", task: task)
-				end
-				remove(task)
+		  finished = Async::Condition.new
+		  waiter = Async do 
+			  @tasks.each do |waiting|
+			    Async do
+			      waiting.task.finished.wait
+			      @tasks.remove?(waiting) unless waiting.task.alive?
+			      finished.signal waiting
+			    end
+			  end
 			end
-		end
-		
+
+	    until @tasks.empty?
+	      waiting = finished.wait
+	      if fail_fast && waiting.task.failed?
+	      	waiter.stop
+	      	raise Async::BarrierError.new(task: waiting.task)
+	      end
+	    end
+		end 
+
 		# Stop all tasks held by the barrier.
 		# @asynchronous May wait for tasks to finish executing.
 		def stop
